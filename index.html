@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>77 / Window</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  body {
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: #f0e8d6;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+    --edge-x: max(20px, env(safe-area-inset-left), env(safe-area-inset-right));
+    --edge-y: max(20px, env(safe-area-inset-bottom));
+  }
+  [hidden] { display: none !important; }
+  canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+
+  .hud {
+    position: fixed; left: var(--edge-x); bottom: var(--edge-y);
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+    pointer-events: none;
+  }
+  #cam {
+    width: 132px; aspect-ratio: 4 / 3; object-fit: cover;
+    transform: scaleX(-1);
+    border: 1px solid rgba(240, 232, 214, 0.22); border-radius: 6px;
+    opacity: 0.55; filter: grayscale(1) contrast(1.1);
+  }
+  #cam[hidden] { display: none; }
+  .status { display: flex; align-items: center; gap: 8px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+  .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.35; }
+  .status[data-mode="head"] i { background: #ff4d1f; opacity: 1; }
+
+  .controls {
+    position: fixed; right: var(--edge-x); bottom: var(--edge-y);
+    display: flex; gap: 10px; align-items: center;
+  }
+  .controls button {
+    width: 44px; height: 44px; padding: 0;
+    display: grid; place-items: center;
+    background: none; border: 1px solid rgba(240, 232, 214, 0.22); border-radius: 50%;
+    color: #f0e8d6; opacity: 0.55; cursor: pointer;
+    transition: opacity 0.2s, border-color 0.2s;
+  }
+  .controls button:hover, .controls button:focus-visible { opacity: 1; border-color: rgba(240, 232, 214, 0.6); }
+  .controls button:focus-visible { outline: 2px solid #f0e8d6; outline-offset: 3px; }
+  .controls button[aria-pressed="true"] { opacity: 1; border-color: #f0e8d6; }
+  .controls button:disabled { cursor: progress; }
+  .controls svg { width: 20px; height: 20px; }
+
+  /* Cursor on the left, webcam on the right; the thumb sits under the active one. */
+  .controls .switch {
+    position: relative; width: 88px; border-radius: 22px;
+    grid-template-columns: 1fr 1fr; opacity: 0.8;
+  }
+  .switch__thumb {
+    position: absolute; left: 3px; top: 3px; width: 40px; height: 36px; border-radius: 18px;
+    background: #f0e8d6; transition: transform 0.25s cubic-bezier(.25, 1, .5, 1);
+  }
+  .switch[aria-checked="true"] .switch__thumb { transform: translateX(40px); }
+  .switch__option {
+    position: relative; place-self: stretch;
+    display: grid; place-items: center; transition: color 0.25s;
+  }
+  .switch[aria-checked="false"] .switch__option--cursor,
+  .switch[aria-checked="true"] .switch__option--camera { color: #000; }
+
+  .tip { position: relative; }
+  .tip::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translate(-50%, 4px);
+    padding: 6px 9px; border-radius: 4px; white-space: nowrap;
+    background: #f0e8d6; color: #000; font: 11px/1.2 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.04em;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s;
+  }
+  .tip--end::after { left: auto; right: 0; transform: translate(0, 4px); }
+  .tip:has(:focus-visible)::after { opacity: 1; transform: translate(-50%, 0); }
+  /* Hover only where there is a real pointer: on touch screens it would stick. */
+  @media (hover: hover) {
+    .tip:hover::after { opacity: 1; transform: translate(-50%, 0); }
+    .tip--end:hover::after { transform: none; }
+  }
+
+  .help {
+    position: fixed; right: var(--edge-x); bottom: calc(var(--edge-y) + 60px);
+    width: min(320px, calc(100vw - 2 * var(--edge-x))); box-sizing: border-box; padding: 16px 18px;
+    background: #f0e8d6; color: #000; border-radius: 10px;
+    font: 13px/1.45 system-ui, sans-serif; -webkit-user-select: text; user-select: text;
+  }
+  .help h2 { margin: 0 28px 6px 0; font-size: 14px; }
+  .help p { margin: 0 0 8px; }
+  .help ol { margin: 0 0 10px; padding-left: 20px; }
+  .help li + li { margin-top: 4px; }
+  .help .help__note { opacity: 0.65; font-size: 12px; }
+  .help button { font: inherit; cursor: pointer; }
+  .help__close {
+    position: absolute; top: 8px; right: 8px; width: 32px; height: 32px;
+    background: none; border: 0; border-radius: 50%; font-size: 20px; line-height: 1; color: inherit;
+  }
+  .help__close:hover { background: rgba(0, 0, 0, 0.08); }
+  #camHelpReload { padding: 7px 14px; background: #000; color: #f0e8d6; border: 0; border-radius: 16px; }
+  .help button:focus-visible { outline: 2px solid #000; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .switch__thumb, .switch__option, .tip::after { transition: none; } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="gl" aria-label="A 3D 77 logo inside a box that shifts perspective as you move your head"></canvas>
+<div class="hud">
+  <video id="cam" playsinline muted hidden></video>
+  <div class="status" id="status" role="status" aria-live="polite" data-mode="pointer" hidden><i></i><span></span></div>
+</div>
+<div class="help" id="camHelp" role="alert" hidden>
+  <button class="help__close" type="button" aria-label="Close">&times;</button>
+  <h2></h2>
+  <p></p>
+  <ol></ol>
+  <p class="help__note"></p>
+  <button id="camHelpReload" type="button">Reload page</button>
+</div>
+<div class="controls">
+  <span class="tip" data-tip="Center view" hidden>
+    <button id="recenter" type="button" aria-label="Center the view on my current head position">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="5"/>
+        <path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>
+      </svg>
+    </button>
+  </span>
+  <button id="camToggle" class="switch" type="button" role="switch" hidden aria-checked="false" aria-label="Track my head with the webcam instead of the cursor">
+    <span class="switch__thumb"></span>
+    <span class="switch__option switch__option--cursor tip" data-tip="Track mouse">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 4l12 7-5.2 1.6L11 18z"/>
+      </svg>
+    </span>
+    <span class="switch__option switch__option--camera tip tip--end" data-tip="Track head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="7" width="13" height="10" rx="2"/>
+        <path d="M16 10.5l5-2.5v8l-5-2.5"/>
+      </svg>
+    </span>
+  </button>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
